@@ -253,7 +253,7 @@ const screenshotAndOCR = async () => {
                 <rect x="0" y="160" width="45" height="60" fill="black" />
                 <rect x="0" y="210" width="435" height="30" fill="black" />
                 <rect x="0" y="440" width="60" height="60" fill="black" />
-        </svg>`
+            </svg>`
         )
         // <rect x="0" y="0" width="85" height="60" fill="black" />
         await Sharp(path.join('temp', 'screenshot.png')) // 使用 path.join 拼接路径
@@ -272,7 +272,7 @@ const screenshotAndOCR = async () => {
                 <rect x="0" y="50" width="370" height="200" fill="black" />
                 <rect x="0" y="250" width="45" height="45" fill="black" />
                 <rect x="0" y="490" width="60" height="60" fill="black" />
-        </svg>`
+            </svg>`
         )
         // <rect x="0" y="0" width="85" height="60" fill="black" />
         await Sharp(path.join('temp', 'screenshot.png')) // 使用 path.join 拼接路径
@@ -335,7 +335,7 @@ child.stdout.on('data', (data: Buffer) => {
     }
 })
 
-const getGearInfo = (gearInfo: [string]) => {
+const getGearInfo = (gearInfo: string[]) => {
     if (gearInfo[0].startsWith("+")) {
         //获取强化等级
         const matchResult = gearInfo[0].match(/\d+/)
