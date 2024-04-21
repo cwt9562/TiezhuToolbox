@@ -88,6 +88,8 @@ const selectedDeviceId = adbStore.device
 const uiIndex = ref('1')
 const autoSwich = ref(true)
 
+const gearInfos = ref<[string][]>([])
+
 const level = ref(0) // 装备等级，85、88、90
 const enhancementLevel = ref(0) // 强化等级
 const tier = ref('') // 装备级别，英雄（紫装）、传说（红装）等等
@@ -208,7 +210,7 @@ const takeScreenshot = () => {
         }
         // 检查 stdout 是否包含 "file pulled" 字符串
         if (stdout.includes("file pulled")) {
-            await getGearInfo()
+            await screenshotAndOCR()
             const randomVersion = Math.random().toString(36).substring(7)
             const imagePath = path.join('tiezhu:', process.cwd(), 'temp', 'screenshot.png')
             src.value = `${imagePath}?v=${randomVersion}`
@@ -216,6 +218,19 @@ const takeScreenshot = () => {
             console.error("截图失败，未能成功拉取文件")
         }
     })
+    function getGearInfoWithRetry(times: number) {
+        if ( times > 20 ) return
+        if (gearInfos.value.length > 0) {
+            getGearInfo(gearInfos.value[0])
+        } else {
+            setTimeout(function () {
+                getGearInfoWithRetry(times + 1);
+            }, 300)
+        }
+    }
+    setTimeout(function () {
+        getGearInfoWithRetry(1)
+    }, 1000)
 
     const activeElement = document.activeElement as HTMLElement
     if (activeElement) {
@@ -224,9 +239,9 @@ const takeScreenshot = () => {
 }
 
 //获取装备信息
-const getGearInfo = async () => {
+const screenshotAndOCR = async () => {
     const processedImagePath = path.join('temp', 'gear_info.png') // 使用 path.join 拼接路径
-
+    gearInfos.value = [];
     //判断ui位置
     if (uiIndex.value === '1' || autoSwich.value === true) {
         const cropOptions = { left: 35, top: 102, width: 435, height: 500 }
@@ -304,62 +319,7 @@ child.stdout.on('data', (data: Buffer) => {
                     }
                     return
                 }
-                if (gearInfo[0].startsWith("+")) {
-                    //获取强化等级
-                    const matchResult = gearInfo[0].match(/\d+/)
-                    if (matchResult) {
-                        enhancementLevel.value = parseInt(matchResult[0])
-                        gearInfo.shift() // 移除数组的第一个元素
-                    } else {
-                        enhancementLevel.value = 0
-                    }
-                } else {
-                    enhancementLevel.value = 0
-                }
-                //获取装备等级
-                level.value = parseInt(gearInfo[0])
-                gearInfo.shift() // 移除数组的第一个元素
-                // 获取装备级别和装备部位
-                tier.value = gearInfo[0].slice(0, 2)
-                part.value = gearInfo[0].slice(2)
-                gearInfo.shift()
-                //是否自动切换
-                const isPart = ["项链", "戒指", "鞋子", "武器", "头盔", "铠甲"].includes(part.value)
-                if (autoSwich.value === true && !isPart) {
-                    return
-                }
-                //获取主属性
-                primaryAttribute.value = gearInfo.slice(0, 2)
-                gearInfo.splice(0, 2)
-                //获取套装
-                let lastItem = gearInfo[gearInfo.length - 1]
-                const indexOfSuit = lastItem.indexOf("套")
-                if (indexOfSuit !== -1) {
-                    set.value = lastItem.slice(0, indexOfSuit)
-                }
-                gearInfo.pop()
-                //获取副属性
-                const enhancementIndex = gearInfo.indexOf("强化+12时获得")
-                if (enhancementIndex !== -1) {
-                    gearInfo = gearInfo.slice(0, enhancementIndex)
-                }
-                type AttributePair = [string, string]
-                let pairedAttributes: AttributePair[] = []
-                for (let i = 0; i < gearInfo.length; i += 2) {
-                    // 使用正则表达式匹配并保留中文字符 防止识别到重铸标志
-                    const matchedChinese = gearInfo[i].match(/[\u4e00-\u9fa5]/g)
-                    const chineseOnly = matchedChinese ? matchedChinese.join('') : ''
-                    pairedAttributes.push([chineseOnly, gearInfo[i + 1]])
-                }
-                attribute.value = pairedAttributes
-                //计算分数
-                score.value = calculateScore(attribute.value)
-                //装备推荐
-                calculateAnalysis()
-                expectantScore.value = parseFloat((expectant() + score.value).toFixed(2))
-                expectantMaxScore.value = parseFloat((calculateMaxScore() + score.value).toFixed(2))
-
-                ipcRenderer.send('query-database', translateSetName(set.value))
+                gearInfos.value.push(gearInfo);
             } else {
                 if (jsonOutput.code === 101) {
                     ElMessage({
@@ -374,6 +334,65 @@ child.stdout.on('data', (data: Buffer) => {
         }
     }
 })
+
+const getGearInfo = (gearInfo: [string]) => {
+    if (gearInfo[0].startsWith("+")) {
+        //获取强化等级
+        const matchResult = gearInfo[0].match(/\d+/)
+        if (matchResult) {
+            enhancementLevel.value = parseInt(matchResult[0])
+            gearInfo.shift() // 移除数组的第一个元素
+        } else {
+            enhancementLevel.value = 0
+        }
+    } else {
+        enhancementLevel.value = 0
+    }
+    //获取装备等级
+    level.value = parseInt(gearInfo[0])
+    gearInfo.shift() // 移除数组的第一个元素
+    // 获取装备级别和装备部位
+    tier.value = gearInfo[0].slice(0, 2)
+    part.value = gearInfo[0].slice(2)
+    gearInfo.shift()
+    //是否自动切换
+    const isPart = ["项链", "戒指", "鞋子", "武器", "头盔", "铠甲"].includes(part.value)
+    if (autoSwich.value === true && !isPart) {
+        return
+    }
+    //获取主属性
+    primaryAttribute.value = gearInfo.slice(0, 2)
+    gearInfo.splice(0, 2)
+    //获取套装
+    let lastItem = gearInfo[gearInfo.length - 1]
+    const indexOfSuit = lastItem.indexOf("套")
+    if (indexOfSuit !== -1) {
+        set.value = lastItem.slice(0, indexOfSuit)
+    }
+    gearInfo.pop()
+    //获取副属性
+    const enhancementIndex = gearInfo.indexOf("强化+12时获得")
+    if (enhancementIndex !== -1) {
+        gearInfo = gearInfo.slice(0, enhancementIndex)
+    }
+    type AttributePair = [string, string]
+    let pairedAttributes: AttributePair[] = []
+    for (let i = 0; i < gearInfo.length; i += 2) {
+        // 使用正则表达式匹配并保留中文字符 防止识别到重铸标志
+        const matchedChinese = gearInfo[i].match(/[\u4e00-\u9fa5]/g)
+        const chineseOnly = matchedChinese ? matchedChinese.join('') : ''
+        pairedAttributes.push([chineseOnly, gearInfo[i + 1]])
+    }
+    attribute.value = pairedAttributes
+    //计算分数
+    score.value = calculateScore(attribute.value)
+    //装备推荐
+    calculateAnalysis()
+    expectantScore.value = parseFloat((expectant() + score.value).toFixed(2))
+    expectantMaxScore.value = parseFloat((calculateMaxScore() + score.value).toFixed(2))
+
+    ipcRenderer.send('query-database', translateSetName(set.value))
+}
 
 const calculateScore = (attribute: [string, string][]): number => {
     let score = 0
