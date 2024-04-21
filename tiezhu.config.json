@@ -1,10 +1,6 @@
 {
     "scoreThreshold": {
         "left": 22,
-        "right": 22
-    },
-    "hero": {
-        "priority": 5,
-        "matchDegree": 3
+        "right": 21
     }
 }
