@@ -104,7 +104,6 @@ const loadAll = () => {
     ]
 }
 const handleSelect = (item: NameItem) => {
-    console.log(item)
     adbStore.port = item.value
 }
 const handleChange = (newValue: string) => {
