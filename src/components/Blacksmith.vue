@@ -2,22 +2,19 @@
     <el-row>
         <el-col :span="10">
             <el-row>
-                <el-col :span="6">
-                    <el-button @click="takeScreenshot">截图</el-button>
-                </el-col>
-                <el-col :span="10">
-                    <el-radio-group v-model="uiIndex">
-                        <el-radio-button label="1">强化</el-radio-button>
-                        <el-radio-button label="2">背包</el-radio-button>
-                    </el-radio-group>
-                </el-col>
                 <el-col :span="8">
-                    <el-switch v-model="autoSwich" inline-prompt active-text="自动切换" inactive-text="关闭自动" />
+                    <el-switch v-model="auto" inline-prompt active-text="开始自动" inactive-text="关闭自动" />
+                </el-col>
+                <el-col :span="16">
+                    <el-button type="primary" @click="handleScreenshot" :loading="loading">截图</el-button>
                 </el-col>
             </el-row>
             <el-descriptions v-if="enhancedRecommendation" class="gear-info" title="装备信息" :column="1">
                 <el-descriptions-item label="装备等级">
                     {{ level }}
+                </el-descriptions-item>
+                <el-descriptions-item label="装备级别">
+                    {{ tier }} - {{ tierMapping[tier] }}
                 </el-descriptions-item>
                 <el-descriptions-item label="强化等级">
                     {{ enhancementLevel !== undefined ? '+' + enhancementLevel : '' }}
@@ -70,7 +67,7 @@
 </template>
 
 <script lang="ts" setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { exec, spawn } from 'child_process'
 import { useAdbStore } from '../store/adb'
 import path from 'path'
@@ -81,12 +78,13 @@ import { ipcRenderer } from 'electron'
 let configData = require(path.join(process.cwd(), 'tiezhu.config.json'))
 let tiezhuConfig = ref(configData)
 
-const Sharp = require('sharp')
-const src = ref('')
+let timer = ref(0)
+const auto = ref(false)
+const loading = ref(false)
+
 const adbStore = useAdbStore()
 const selectedDeviceId = adbStore.device
-const uiIndex = ref('1')
-const autoSwich = ref(true)
+const Sharp = require('sharp')
 
 const gearInfos = ref<[string][]>([])
 
@@ -107,6 +105,11 @@ const recommendHighSpeed = ref(false) // 推荐高速
 const warningPrimaryAttributeFixed = ref(false) // 警告主属性固定
 const warningBothEffAndRes = ref(false) // 警告同时具有双效
 
+const tierMapping: { [key: string]: string } = {
+    "稀有": "蓝装",
+    "英雄": "紫装",
+    "传说": "红装"
+}
 const setMapping: { [key: string]: string } = {
     "破灭": "set_cri_dmg",
     "愤怒": "set_rage",
@@ -147,9 +150,15 @@ onMounted(() => {
     delete require.cache[require.resolve(path.join(process.cwd(), 'tiezhu.config.json'))]
     configData = require(path.join(process.cwd(), 'tiezhu.config.json'))
     tiezhuConfig.value = configData
+
+    // 开启自动执行的定时器
+    timer.value = window.setInterval(autoExec, 1500)
 })
 
 onUnmounted(() => {
+    // 移除自动执行的定时器
+    window.clearInterval(timer.value)
+    
     //停止监听
     // ipcRenderer.removeListener('query-result', queryResultListener)
 
@@ -174,15 +183,23 @@ const child = spawn(path.join(process.cwd(), 'PaddleOCR-json', 'PaddleOCR-json.e
     cwd: path.join(process.cwd(), 'PaddleOCR-json'),
     stdio: ['pipe', 'pipe', 'pipe']
 })
-const translateSetName = (cnName: string) => {
-    return setMapping[cnName]
-}
-const translateStatName = (cnStatName: string): string => {
-    return statsMapping[cnStatName]
+
+
+const autoExec = () => {
+    if (auto.value == false) {
+        return
+    }
+    if (loading.value == true) {
+        return
+    }
+    if (adbStore.status === 0) {
+        return
+    }
+    handleScreenshot()
 }
 
 //截图
-const takeScreenshot = () => {
+const handleScreenshot = async () => {
     if (adbStore.status === 0) {
         ElMessage({
             message: '尚未连接',
@@ -190,6 +207,8 @@ const takeScreenshot = () => {
         })
         return
     }
+    loading.value = true
+    await nextTick();
     const adbPath = path.join(process.cwd(), 'platform-tools', 'adb.exe')
     const tempFolderPath = path.join(process.cwd(), 'temp') // 指定temp文件夹的路径
     const screenshotFilePath = path.join(tempFolderPath, 'screenshot.png') // 指定截图文件的路径
@@ -199,6 +218,9 @@ const takeScreenshot = () => {
     if (!fs.existsSync(tempFolderPath)) {
         fs.mkdirSync(tempFolderPath)
     }
+
+    gearInfos.value = [];
+
     exec(adbCommand, async (error, stdout, stderr) => {
         if (error) {
             console.error('截图错误:', error)
@@ -211,17 +233,18 @@ const takeScreenshot = () => {
         // 检查 stdout 是否包含 "file pulled" 字符串
         if (stdout.includes("file pulled")) {
             await screenshotAndOCR()
-            const randomVersion = Math.random().toString(36).substring(7)
-            const imagePath = path.join('tiezhu:', process.cwd(), 'temp', 'screenshot.png')
-            src.value = `${imagePath}?v=${randomVersion}`
         } else {
             console.error("截图失败，未能成功拉取文件")
         }
     })
     function getGearInfoWithRetry(times: number) {
-        if ( times > 20 ) return
+        if ( times > 15 ) {
+            loading.value = false
+            return
+        }
         if (gearInfos.value.length > 0) {
             getGearInfo(gearInfos.value[0])
+            loading.value = false
         } else {
             setTimeout(function () {
                 getGearInfoWithRetry(times + 1);
@@ -240,48 +263,44 @@ const takeScreenshot = () => {
 
 //获取装备信息
 const screenshotAndOCR = async () => {
-    const processedImagePath = path.join('temp', 'gear_info.png') // 使用 path.join 拼接路径
-    gearInfos.value = [];
-    //判断ui位置
-    if (uiIndex.value === '1' || autoSwich.value === true) {
-        const cropOptions = { left: 35, top: 102, width: 435, height: 500 }
-        const blackOverlay = Buffer.from(
-            `<svg width="435" height="500">
-                <rect x="55" y="32" width="80" height="20" fill="black" />
-                <rect x="0" y="380" width="435" height="60" fill="black" />
-                <rect x="0" y="50" width="435" height="110" fill="black" />
-                <rect x="0" y="160" width="45" height="60" fill="black" />
-                <rect x="0" y="210" width="435" height="30" fill="black" />
-                <rect x="0" y="440" width="60" height="60" fill="black" />
-            </svg>`
-        )
-        // <rect x="0" y="0" width="85" height="60" fill="black" />
-        await Sharp(path.join('temp', 'screenshot.png')) // 使用 path.join 拼接路径
-            .resize(1600, 900)
-            .extract(cropOptions)
-            .composite([{ input: blackOverlay, top: 0, left: 0 }])
-            .toFile(processedImagePath)
-        await textOcr(processedImagePath)
-    }
-    if (uiIndex.value === '2' || autoSwich.value === true) {
-        const cropOptions = { left: 415, top: 137, width: 370, height: 550 }
-        const blackOverlay = Buffer.from(
-            `<svg width="370" height="550">
-                <rect x="55" y="32" width="80" height="20" fill="black" />
-                <rect x="0" y="460" width="370" height="40" fill="black" />
-                <rect x="0" y="50" width="370" height="200" fill="black" />
-                <rect x="0" y="250" width="45" height="45" fill="black" />
-                <rect x="0" y="490" width="60" height="60" fill="black" />
-            </svg>`
-        )
-        // <rect x="0" y="0" width="85" height="60" fill="black" />
-        await Sharp(path.join('temp', 'screenshot.png')) // 使用 path.join 拼接路径
-            .resize(1600, 900)
-            .extract(cropOptions)
-            .composite([{ input: blackOverlay, top: 0, left: 0 }])
-            .toFile(processedImagePath)
-        await textOcr(processedImagePath)
-    }
+    const processedImagePath1 = path.join('temp', 'gear_info_1.png') // 使用 path.join 拼接路径
+    const cropOptions1 = { left: 35, top: 102, width: 435, height: 500 }
+    const blackOverlay1 = Buffer.from(
+        `<svg width="435" height="500">
+            <rect x="55" y="32" width="80" height="20" fill="black" />
+            <rect x="0" y="380" width="435" height="60" fill="black" />
+            <rect x="0" y="50" width="435" height="110" fill="black" />
+            <rect x="0" y="160" width="45" height="60" fill="black" />
+            <rect x="0" y="210" width="435" height="30" fill="black" />
+            <rect x="0" y="440" width="60" height="60" fill="black" />
+        </svg>`
+    )
+    // <rect x="0" y="0" width="85" height="60" fill="black" />
+    await Sharp(path.join('temp', 'screenshot.png')) // 使用 path.join 拼接路径
+        .resize(1600, 900)
+        .extract(cropOptions1)
+        .composite([{ input: blackOverlay1, top: 0, left: 0 }])
+        .toFile(processedImagePath1)
+    await textOcr(processedImagePath1)
+
+    const processedImagePath2 = path.join('temp', 'gear_info_2.png') 
+    const cropOptions2 = { left: 415, top: 137, width: 370, height: 550 }
+    const blackOverlay2 = Buffer.from(
+        `<svg width="370" height="550">
+            <rect x="55" y="32" width="80" height="20" fill="black" />
+            <rect x="0" y="460" width="370" height="40" fill="black" />
+            <rect x="0" y="50" width="370" height="200" fill="black" />
+            <rect x="0" y="250" width="45" height="45" fill="black" />
+            <rect x="0" y="490" width="60" height="60" fill="black" />
+        </svg>`
+    )
+    // <rect x="0" y="0" width="85" height="60" fill="black" />
+    await Sharp(path.join('temp', 'screenshot.png')) // 使用 path.join 拼接路径
+        .resize(1600, 900)
+        .extract(cropOptions2)
+        .composite([{ input: blackOverlay2, top: 0, left: 0 }])
+        .toFile(processedImagePath2)
+    await textOcr(processedImagePath2)
 }
 
 //Ocr识别
@@ -306,17 +325,16 @@ child.stdout.on('data', (data: Buffer) => {
         console.log(strOut)
     } else {
         try {
+            // console.log(strOut)
             let jsonOutput = JSON.parse(strOut)
             if (jsonOutput.code === 100) {
-                let gearInfo = jsonOutput.data.filter((item: { score: number }) => item.score >= 0.5).map((item: { text: string }) => item.text)
-                if (gearInfo.length < 8) {
-                    if (autoSwich.value !== true) {
-                        ElMessage({
-                            message: '数据可能不正确，请确认图片内容',
-                            type: 'error',
-                        })
-                        console.log("数据可能不正确，请确认图片内容")
-                    }
+                let gearInfo = jsonOutput.data
+                    .filter((item: { score: number }) => item.score >= 0.5)
+                    .map((item: { text: string }) => item.text)
+                if (gearInfo.length <= 10) {
+                    return
+                }
+                if (gearInfo[0] == "背包") {
                     return
                 }
                 gearInfos.value.push(gearInfo);
@@ -336,6 +354,7 @@ child.stdout.on('data', (data: Buffer) => {
 })
 
 const getGearInfo = (gearInfo: string[]) => {
+    // console.info("gearInfo="+gearInfo)
     if (gearInfo[0].startsWith("+")) {
         //获取强化等级
         const matchResult = gearInfo[0].match(/\d+/)
@@ -345,19 +364,48 @@ const getGearInfo = (gearInfo: string[]) => {
         } else {
             enhancementLevel.value = 0
         }
+
+        //获取装备等级
+        const matchResult2 = gearInfo[0].match(/\d+/)
+        if (matchResult2) {
+            level.value = parseInt(matchResult2[0])
+        } else {
+            level.value = 0
+        }
+        gearInfo.shift()
+    } else if (/\d{2}/.test(gearInfo[0])) {
+        //获取装备等级
+        const matchResult2 = gearInfo[0].match(/\d+/)
+        if (matchResult2) {
+            level.value = parseInt(matchResult2[0])
+        } else {
+            level.value = 0
+        }
+        gearInfo.shift()
+
+        if (gearInfo[0].startsWith("+")) {
+            //获取强化等级
+            const matchResult = gearInfo[0].match(/\d+/)
+            if (matchResult) {
+                enhancementLevel.value = parseInt(matchResult[0])
+                gearInfo.shift() // 移除数组的第一个元素
+            } else {
+                enhancementLevel.value = 0
+            }
+        } else {
+            enhancementLevel.value = 0
+        }
     } else {
+        level.value = 0
         enhancementLevel.value = 0
     }
-    //获取装备等级
-    level.value = parseInt(gearInfo[0])
-    gearInfo.shift() // 移除数组的第一个元素
     // 获取装备级别和装备部位
     tier.value = gearInfo[0].slice(0, 2)
     part.value = gearInfo[0].slice(2)
     gearInfo.shift()
     //是否自动切换
     const isPart = ["项链", "戒指", "鞋子", "武器", "头盔", "铠甲"].includes(part.value)
-    if (autoSwich.value === true && !isPart) {
+    if (!isPart) {
         return
     }
     //获取主属性
@@ -467,26 +515,47 @@ const calculateAnalysis = () => {
             hasRes = true
         }
     }
-    if (enhancementLevel.value < 3 && speed >= 3) recommendHighSpeed.value = true
-    else if (enhancementLevel.value < 6 && speed >= 6) recommendHighSpeed.value = true
-    else if (enhancementLevel.value < 9 && speed >= 9) recommendHighSpeed.value = true
-    else if (enhancementLevel.value < 12 && speed >= 12) recommendHighSpeed.value = true
-    else if (enhancementLevel.value < 15 && speed >= 15) recommendHighSpeed.value = true
-    else if (enhancementLevel.value == 15 && speed >= 15) recommendHighSpeed.value = true
+
+    if(hasEff && hasRes) warningBothEffAndRes.value = true
+
+    if ("鞋子" != part.value && tier.value == "英雄") {
+        if (enhancementLevel.value >= 0 && enhancementLevel.value <= 2) {
+            recommendHighSpeed.value = speed >= 3
+        } else if (enhancementLevel.value >= 3 && enhancementLevel.value <= 5) {
+            recommendHighSpeed.value = speed >= 6
+        } else if (enhancementLevel.value >= 6 && enhancementLevel.value <= 8) {
+            recommendHighSpeed.value = speed >= 9
+        } else if (enhancementLevel.value >= 9 && enhancementLevel.value <= 14) {
+            recommendHighSpeed.value = speed >= 12
+        } else if (enhancementLevel.value == 15 ) {
+            recommendHighSpeed.value = speed >= 16
+        } 
+    } else if ("鞋子" != part.value && tier.value == "传说") {
+        if (enhancementLevel.value >= 0 && enhancementLevel.value <= 2) {
+            recommendHighSpeed.value = speed >= 3
+        } else if (enhancementLevel.value >= 3 && enhancementLevel.value <= 5) {
+            recommendHighSpeed.value = speed >= 6
+        } else if (enhancementLevel.value >= 6 && enhancementLevel.value <= 8) {
+            recommendHighSpeed.value = speed >= 9
+        } else if (enhancementLevel.value >= 9 && enhancementLevel.value <= 11) {
+            recommendHighSpeed.value = speed >= 10
+        } else if (enhancementLevel.value >= 12 && enhancementLevel.value <= 14) {
+            recommendHighSpeed.value = speed >= 12
+        } else if (enhancementLevel.value == 15 ) {
+            recommendHighSpeed.value = speed >= 16
+        } 
+    }
     
     let initScore = tiezhuConfig.value.scoreThreshold.left;
     if (["项链", "戒指", "鞋子"].includes(part.value)) {
         initScore = tiezhuConfig.value.scoreThreshold.right;
     }
-
     if (enhancementLevel.value < 3 && score.value >= initScore) recommendHighScore.value = true 
-    else if (enhancementLevel.value < 6 && score.value >= initScore + 6) recommendHighScore.value = true 
-    else if (enhancementLevel.value < 9 && score.value >= initScore + 12) recommendHighScore.value = true 
-    else if (enhancementLevel.value < 12 && score.value >= initScore + 18) recommendHighScore.value = true 
-    else if (enhancementLevel.value < 15 && score.value >= initScore + 26) recommendHighScore.value = true 
-    else if (enhancementLevel.value == 15 && score.value >= initScore + 34) recommendHighScore.value = true 
-
-    if(hasEff && hasRes) warningBothEffAndRes.value = true
+    else if (enhancementLevel.value < 6 && score.value >= initScore + 6) recommendHighScore.value = true // 28
+    else if (enhancementLevel.value < 9 && score.value >= initScore + 13) recommendHighScore.value = true // 35
+    else if (enhancementLevel.value < 12 && score.value >= initScore + 20) recommendHighScore.value = true // 42
+    else if (enhancementLevel.value < 15 && score.value >= initScore + 27) recommendHighScore.value = true // 49
+    else if (enhancementLevel.value == 15 && score.value >= initScore + 34) recommendHighScore.value = true // 56
 
     if (recommendHighScore.value == true) {
         if (enhancementLevel.value < 15) enhancedRecommendation.value = "继续强化"
@@ -555,11 +624,13 @@ const calculateMaxScore = (): number => {
 child.on('close', () => {
     console.log('子进程退出')
 })
-// 因为这个工具的作者把info输出在了stderr，所以不要做错误处理
-// child.stderr.on('data', (data) => {
-//     console.error(`子进程错误输出：${data}`)
-// })
 
+const translateSetName = (cnName: string) => {
+    return setMapping[cnName]
+}
+const translateStatName = (cnStatName: string): string => {
+    return statsMapping[cnStatName]
+}
 </script>
 
 <style lang="scss">
