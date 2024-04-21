@@ -16,6 +16,9 @@
                 </el-col>
             </el-row>
             <el-descriptions v-if="enhancedRecommendation" class="gear-info" title="装备信息" :column="1">
+                <el-descriptions-item label="装备等级">
+                    {{ level }}
+                </el-descriptions-item>
                 <el-descriptions-item label="强化等级">
                     {{ enhancementLevel !== undefined ? '+' + enhancementLevel : '' }}
                 </el-descriptions-item>
@@ -85,6 +88,7 @@ const selectedDeviceId = adbStore.device
 const uiIndex = ref('1')
 const autoSwich = ref(true)
 
+const level = ref(0) // 装备等级，85、88、90
 const enhancementLevel = ref(0) // 强化等级
 const tier = ref('') // 装备级别，英雄（紫装）、传说（红装）等等
 const part = ref('') // 装备部位，武器、头盔、铠甲、项链、戒指、鞋子
@@ -112,7 +116,7 @@ const setMapping: { [key: string]: string } = {
     "防御": "set_def",
     "吸血": "set_vampire",
     "伤口": "set_scar",
-    "生命值": "set_max_hp",
+    "生命": "set_max_hp",
     "反击": "set_counter",
     "守护": "set_shield",
     "速度": "set_speed",
@@ -228,7 +232,6 @@ const getGearInfo = async () => {
         const cropOptions = { left: 35, top: 102, width: 435, height: 500 }
         const blackOverlay = Buffer.from(
             `<svg width="435" height="500">
-                <rect x="0" y="0" width="85" height="60" fill="black" />
                 <rect x="55" y="32" width="80" height="20" fill="black" />
                 <rect x="0" y="380" width="435" height="60" fill="black" />
                 <rect x="0" y="50" width="435" height="110" fill="black" />
@@ -237,6 +240,7 @@ const getGearInfo = async () => {
                 <rect x="0" y="440" width="60" height="60" fill="black" />
         </svg>`
         )
+        // <rect x="0" y="0" width="85" height="60" fill="black" />
         await Sharp(path.join('temp', 'screenshot.png')) // 使用 path.join 拼接路径
             .resize(1600, 900)
             .extract(cropOptions)
@@ -248,7 +252,6 @@ const getGearInfo = async () => {
         const cropOptions = { left: 415, top: 137, width: 370, height: 550 }
         const blackOverlay = Buffer.from(
             `<svg width="370" height="550">
-                <rect x="0" y="0" width="85" height="60" fill="black" />
                 <rect x="55" y="32" width="80" height="20" fill="black" />
                 <rect x="0" y="460" width="370" height="40" fill="black" />
                 <rect x="0" y="50" width="370" height="200" fill="black" />
@@ -256,6 +259,7 @@ const getGearInfo = async () => {
                 <rect x="0" y="490" width="60" height="60" fill="black" />
         </svg>`
         )
+        // <rect x="0" y="0" width="85" height="60" fill="black" />
         await Sharp(path.join('temp', 'screenshot.png')) // 使用 path.join 拼接路径
             .resize(1600, 900)
             .extract(cropOptions)
@@ -276,7 +280,6 @@ const textOcr = async (imagePath: string): Promise<any> => {
 // 从子进程接收数据
 child.stdout.on('data', (data: Buffer) => {
     let strOut: string = data.toString()
-    console.log(strOut)
     // 检测启动成功
     if (strOut.includes('OCR init completed.')) {
         console.log('初始化完成！')
@@ -301,17 +304,23 @@ child.stdout.on('data', (data: Buffer) => {
                     }
                     return
                 }
-
-                //获取强化等级
-                const matchResult = gearInfo[0].match(/\d+/)
-                if (matchResult) {
-                    enhancementLevel.value = parseInt(matchResult[0])
-                    gearInfo.shift() // 移除数组的第一个元素
+                if (gearInfo[0].startsWith("+")) {
+                    //获取强化等级
+                    const matchResult = gearInfo[0].match(/\d+/)
+                    if (matchResult) {
+                        enhancementLevel.value = parseInt(matchResult[0])
+                        gearInfo.shift() // 移除数组的第一个元素
+                    } else {
+                        enhancementLevel.value = 0
+                    }
                 } else {
                     enhancementLevel.value = 0
                 }
+                //获取装备等级
+                level.value = parseInt(gearInfo[0])
+                gearInfo.shift() // 移除数组的第一个元素
                 // 获取装备级别和装备部位
-                let tier = gearInfo[0].slice(0, 2)
+                tier.value = gearInfo[0].slice(0, 2)
                 part.value = gearInfo[0].slice(2)
                 gearInfo.shift()
                 //是否自动切换
